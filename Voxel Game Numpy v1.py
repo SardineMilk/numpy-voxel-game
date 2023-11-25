@@ -152,7 +152,7 @@ def raycast(length, camera):
     return position
 
 
-def clamp(n, min_num, max_num):  # Why is this only needed on school computers?
+def clamp(n, min_num, max_num):  # Why is this only needed on some computers?
     if n < min_num:
         n = min_num
     if n > max_num:
@@ -167,7 +167,7 @@ def ambient_occlusion(voxel_x, voxel_y, voxel_z):
             for z in range(-1, 1):
                 if voxels[voxel_x + x, voxel_y + y, voxel_z + z] != 0:
                     adjacents += 1
-    # 1 to 27
+    # 1 to 27 range
     light_mult = 1 - ((adjacents / 27) / 1.5)
 
     return light_mult
@@ -180,7 +180,6 @@ def save_array_simple(file, array):
             for voxel in y:
                 external_file.write(f"{int(voxel)}\n")
 
-    # external_file.write(array)
     external_file.close()
 
 
@@ -205,19 +204,6 @@ def sort_voxels(input_voxels):
     output_voxels = input_voxels[indices]  # Turn back from distances to positions
 
     return output_voxels
-
-
-"""
-def save_array_np(file, array):
-    array_reshaped = array.reshape(array.shape[0], -1)
-    np.savetxt(file, array_reshaped)
-
-
-def load_array_np(file):
-    # x y and z are the 3d dimensions of the array
-    loaded_array = np.loadtxt(file)
-    print(loaded_array_original)
-"""
 
 
 pygame.init()
@@ -378,7 +364,6 @@ while running:
         if breaking:
             placing_type = 0
 
-        # Get the closest block. Then go one less
         look_position = raycast(reach_distance, camera)
 
         # So it doesn't crash when you place a voxel outside the chunk
