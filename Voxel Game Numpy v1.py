@@ -1,0 +1,429 @@
+
+from math import *
+import numpy as np
+import pygame
+from pygame import *
+from pygame.locals import *
+from pygame.math import *
+from pygame import gfxdraw
+
+# import profiler
+# profiler.profiler().start(True)
+
+
+class Camera:
+    def __init__(self, camera_position, camera_yaw, camera_pitch, camera_roll):
+        self.position = camera_position
+        self.x = camera_position.x
+        self.y = camera_position.y
+        self.z = camera_position.z
+
+        self.yaw = camera_yaw
+        self.pitch = camera_pitch
+        self.roll = camera_roll
+
+
+def process_voxel(voxel_type, voxel_x, voxel_y, voxel_z):
+    voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+    for face in FACES:
+        visible = check_visibility(face, voxel_pos)
+        projected_face = ()
+        if visible:
+            for point in face:
+
+                vertex = Vector3(VERTICES[point])
+                # Translate based on cube position
+                vertex += voxel_pos
+                # Translate based on camera position
+                vertex += camera.position
+
+                # Rotate Yaw - Y
+                vertex = vertex.rotate(-camera.yaw, Vector3(0, 1, 0))
+                # Rotate Pitch - X
+                vertex = vertex.rotate(camera.pitch, Vector3(1, 0, 0))
+                # Rotate Roll - Z
+                vertex = vertex.rotate(camera.roll, Vector3(0, 0, 1))
+
+                # Frustum culling
+                if vertex.z > 0.5:
+                    # Project vertex
+                    x, y = project_vertex(vertex)
+
+                    # Concatenate the face tuple to include the projected vertex
+                    projected_face += ((x, y),)
+
+        if len(projected_face) == len(face):  # If all vertices are visible - Frustum culling check
+            # Fetches the cube colour from the lookup table.
+            colour = colour_index[voxel_type - 1]  # -1 because the voxel's placing_type is shifted up 1 to allow 0 to be air
+            # amp = 20
+            # colour = (int(clamp(colour[0] - voxel_x * amp, 0, 255)), int(clamp(colour[1] - voxel_y * amp, 0, 255)), int(clamp(colour[2] - voxel_z * amp, 0, 255)))  # RGB lighting but convoluted code
+
+            ambient_occlusion_intensity = ambient_occlusion(voxel_x, voxel_y, voxel_z)
+
+            r, g, b = colour
+            r *= ambient_occlusion_intensity
+            g *= ambient_occlusion_intensity
+            b *= ambient_occlusion_intensity
+            colour = (r, g, b)
+
+            pygame.gfxdraw.filled_polygon(screen, projected_face, colour)
+            pygame.gfxdraw.aapolygon(screen, projected_face, WHITE)
+
+
+def check_visibility(current_face, position):
+    face_normal = FACE_NORMALS[FACES.index(current_face)]
+
+    # Interior Face Culling - Cull things facing another cube
+    cube_check = position - face_normal
+
+    # I love that numpy arrays mean I can just do this instead of sorting through the entire list
+    check_type = voxels[int(cube_check.x), int(cube_check.y), int(cube_check.z)]
+    if check_type != 0:  # If the face is touching an air block
+        return False
+
+    # Backface culling
+    if face_normal.dot(Vector3(VERTICES[current_face[0]]) - (camera.position + position)) > cull_tolerance:  # Magic voodoo maths. Why current_face[0]? I wrote this at 3am
+        return False
+
+    return True
+
+
+def project_vertex(input_vertex):
+    # Project onto a 2d plane and scale to screen size
+    x_2d = (focal_length * (input_vertex.x / input_vertex.z) + 1) * WIDTH / 2
+    y_2d = (focal_length * (input_vertex.y / input_vertex.z) + 1) * HEIGHT / 2
+
+    return x_2d, y_2d
+
+
+def move_camera(camera, speed):
+    # Move the camera based on keyboard inputs
+    speed *= delta / 1000  # Calculate distance based on speed and elapsed time
+    rad_yaw = radians(camera.yaw)
+
+    if keys[K_w]:  # Move forward
+        camera.x -= sin(rad_yaw) * speed
+        camera.z -= cos(rad_yaw) * speed
+    if keys[K_s]:  # Move backward
+        camera.x += sin(rad_yaw) * speed
+        camera.z += cos(rad_yaw) * speed
+    if keys[K_d]:  # Strafe left
+        camera.x -= cos(rad_yaw) * speed
+        camera.z += sin(rad_yaw) * speed
+    if keys[K_a]:  # Strafe right
+        camera.x += cos(rad_yaw) * speed
+        camera.z -= sin(rad_yaw) * speed
+    if keys[K_SPACE]:  # Move up
+        camera.y += speed
+    if keys[K_LSHIFT]:  # Move down
+        camera.y -= speed
+
+    camera.position = Vector3(camera.x, camera.y, camera.z)
+
+    return camera
+
+
+def delta_time(last_time):
+    current_time = pygame.time.get_ticks()
+    elapsed_time = current_time - last_time
+    return elapsed_time, current_time
+
+
+def world_gen(x, y, z):
+    # Buffer of 1 on each side to prevent overflow. I've not yet implemented multiple chunks so this will have to do
+    if 0 < y < 15 and 0 < x < 15 and 0 < z < 15:
+        return 1
+    else:
+        return 0
+
+    #y_pos = 5
+    #if y == y_pos and 0 < x < 15 and 0 < z < 15:
+    #    return 1
+    #else:
+    #    return 0
+
+
+def raycast(length, camera):
+    x_distance = sin(radians(camera.yaw)) * cos(radians(camera.pitch)) * length
+    z_distance = cos(radians(camera.yaw)) * cos(radians(camera.pitch)) * length
+    y_distance = sin(radians(camera.pitch)) * length
+    position = Vector3(x_distance, y_distance, z_distance)
+    position -= camera.position
+    return position
+
+
+def clamp(n, min_num, max_num):  # Why is this only needed on school computers?
+    if n < min_num:
+        n = min_num
+    if n > max_num:
+        n = max_num
+    return n
+
+
+def ambient_occlusion(voxel_x, voxel_y, voxel_z):
+    adjacents = 0
+    for x in range(-1, 1):
+        for y in range(-1, 1):
+            for z in range(-1, 1):
+                if voxels[voxel_x + x, voxel_y + y, voxel_z + z] != 0:
+                    adjacents += 1
+    # 1 to 27
+    light_mult = 1 - ((adjacents / 27) / 1.5)
+
+    return light_mult
+
+
+def save_array_simple(file, array):
+    external_file = open(file, "w")
+    for x in array:
+        for y in x:
+            for voxel in y:
+                external_file.write(f"{int(voxel)}\n")
+
+    # external_file.write(array)
+    external_file.close()
+
+
+def load_array_3d(file, x_size, y_size, z_size):
+    external_file = open(file, "r")
+    array = external_file.read().splitlines()
+
+    loaded_voxels = np.zeros((x_size, y_size, z_size), dtype=int)
+
+    for x in range(x_size):
+        for y in range(y_size):
+            for z in range(z_size):
+                loaded_voxels[x, y, z] = array[(x * 16 ** 2) + (y * 16) + z]
+
+    return loaded_voxels
+
+
+def sort_voxels(input_voxels):
+    # Sort voxels by distance
+    distances = np.linalg.norm(input_voxels + camera.position, axis=1)  # Voodoo
+    indices = np.argsort(distances)[::-1]  # Reverse sort the list
+    output_voxels = input_voxels[indices]  # Turn back from distances to positions
+
+    return output_voxels
+
+
+"""
+def save_array_np(file, array):
+    array_reshaped = array.reshape(array.shape[0], -1)
+    np.savetxt(file, array_reshaped)
+
+
+def load_array_np(file):
+    # x y and z are the 3d dimensions of the array
+    loaded_array = np.loadtxt(file)
+    print(loaded_array_original)
+"""
+
+
+pygame.init()
+
+# Set up the display
+WIDTH, HEIGHT = 1024, 1024  # This is just the pixel count, when in full-screen this is stretched
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+pygame.display.set_caption("Voxel Game")
+
+# Define colours
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+
+VERTICES = [
+    (0, 0, 0),  # I'm not labelling these vertices
+    (1, 0, 0),
+    (1, 1, 0),
+    (0, 1, 0),
+    (0, 0, 1),
+    (1, 0, 1),
+    (1, 1, 1),
+    (0, 1, 1),
+]
+
+FACES = [
+    (5, 4, 7, 6),  # Front face
+    (4, 0, 3, 7),  # Right face
+    (0, 1, 2, 3),  # Back face
+    (1, 5, 6, 2),  # Left face
+    (4, 5, 1, 0),  # Bottom face
+    (3, 2, 6, 7),  # Top face
+]
+
+# Bake face normals, so they aren't calculated each frame
+# It's OK, I don't understand it either
+FACE_NORMALS = []
+for face in FACES:
+    v0, v1, v2, v3 = face
+    vertex0 = pygame.math.Vector3(VERTICES[v0])
+    vertex1 = pygame.math.Vector3(VERTICES[v1])
+    vertex2 = pygame.math.Vector3(VERTICES[v2])
+    edge1 = vertex1 - vertex0
+    edge2 = vertex2 - vertex0
+    normal = edge1.cross(edge2).normalize()
+    FACE_NORMALS.append(normal)
+
+# Counts from 1. e.g. Stone is 1
+colour_index = [
+    (105, 105, 105),  # Stone
+    (89, 201, 165),  # Cyan
+    (23, 255, 22),  # Grass
+    (255, 255, 0),  # Yellow
+    (255, 255, 255),  # White
+]
+
+# Define the array - A 16 * 16 * 16 chunk
+voxels = np.zeros((16, 16, 16), dtype=int)
+
+for x in range(voxels.shape[0]):
+    for y in range(voxels.shape[1]):
+        for z in range(voxels.shape[2]):
+            voxels[x, y, z] = world_gen(x, y, z)
+
+# Player variables
+mouse_lock = True
+mouse_visibility = False
+placing = False
+breaking = False
+
+camera = Camera(Vector3(0, 0, 0), 0, 0, 0)
+
+movement_speed = 5  # Units per second
+reach_distance = 5
+mouse_sensitivity = 0.25
+
+# Projection variables
+focal_length = 1  # How far the projection plane is from the camera, aka magic voodoo number that makes the game work
+cull_tolerance = -0.3
+
+# Performance variables
+MAX_FPS = 120
+
+# Random variables that just need initialised
+time = 0
+clock = pygame.time.Clock()
+frames = 0
+
+# Screen Size
+aspect_ratio = screen.get_height() / screen.get_width()
+# Calculate screen centre
+center_x = int(screen.get_width() / 2)
+center_y = int(screen.get_height() / 2)
+
+# Main game loop
+running = True
+while running:
+    # Misc
+    delta, time = delta_time(time)
+
+    # Calculate fps
+    try:
+        current_fps = str(int(1 / (delta / 1000)))
+    except:
+        current_fps = "N/A"
+
+    print(current_fps)
+
+    frames += 1
+
+    # Player
+    # Handle inputs
+    for event in pygame.event.get():
+        if event.type == KEYDOWN:
+            if event.key == K_ESCAPE:
+                running = False
+
+            if event.key == K_f:
+                pygame.display.toggle_fullscreen()
+
+                aspect_ratio = screen.get_height() / screen.get_width()
+                # Calculate screen centre
+                center_x = int(screen.get_width() / 2)
+                center_y = int(screen.get_height() / 2)
+
+            if event.key == K_g:
+                mouse_lock = not mouse_lock
+                mouse_visibility = not mouse_visibility
+
+            if event.key == K_i:
+                save_array_simple("chunk_save_data.txt", voxels)
+            if event.key == K_o:
+                voxels = load_array_3d("chunk_save_data.txt", 16, 16, 16)
+
+        if event.type == MOUSEMOTION:
+            mouse_dx, mouse_dy = event.rel
+            camera.yaw += mouse_dx * mouse_sensitivity
+            camera.pitch += mouse_dy * mouse_sensitivity
+            camera.pitch = clamp(camera.pitch, -90, 90)  # Clamp camera pitch within -89 to 89 degrees
+
+        if event.type == MOUSEBUTTONDOWN and event.button == 3:
+            placing = True
+        if event.type == MOUSEBUTTONUP and event.button == 3:
+            placing = False
+        if event.type == MOUSEBUTTONDOWN and event.button == 1:
+            breaking = True
+        if event.type == MOUSEBUTTONUP and event.button == 1:
+            breaking = False
+
+    if mouse_lock:
+        pygame.mouse.set_pos(center_x, center_y)
+        pygame.event.set_grab(True)  # Confines the mouse cursor to the window
+    pygame.mouse.set_visible(mouse_visibility)
+
+    if placing or breaking:
+        placing_type = 0
+        if placing:
+            placing_type = 2
+        if breaking:
+            placing_type = 0
+
+        # Get the closest block. Then go one less
+        look_position = raycast(reach_distance, camera)
+
+        # So it doesn't crash when you place a voxel outside the chunk
+        look_position.x = clamp(look_position.x, 1, 14)
+        look_position.y = clamp(look_position.y, 1, 14)
+        look_position.z = clamp(look_position.z, 1, 14)
+
+        voxels[int(look_position.x), int(look_position.y), int(look_position.z)] = placing_type
+
+    keys = pygame.key.get_pressed()
+    camera = move_camera(camera, movement_speed)
+
+    if keys[K_q]:
+        camera.roll += 10 * delta
+    if keys[K_e]:
+        camera.roll -= 10 * delta
+    if keys[K_m]:
+        focal_length += 0.05
+    if keys[K_n]:
+        focal_length -= 0.05
+
+    # Rendering
+    screen.fill(BLACK)  # Clear the screen - doubles as background
+
+    # Construct an array of the non-air voxels
+    non_air_voxels = np.argwhere(voxels != 0)
+
+    # Sort the coordinates based on distances
+    sorted_voxels = sort_voxels(non_air_voxels)
+
+    for voxel in sorted_voxels:
+        x, y, z = voxel
+        voxel_type = voxels[x, y, z]
+        process_voxel(voxel_type, x, y, z)
+
+    # Crosshair
+    pygame.draw.circle(screen, WHITE, (WIDTH/2, HEIGHT/2), 2)
+
+    pygame.display.flip()
+    clock.tick(MAX_FPS)
+
+# Calculate and display the average fps
+avg_fps = frames / (time / 1000)
+print(f"Last frame per second = {current_fps} fps")
+print(f"Average frames per second = {round(avg_fps, 2)} fps")
+
+# Quit if the game loop is broken
+pygame.quit()
