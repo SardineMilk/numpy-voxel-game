@@ -163,7 +163,7 @@ def load_array_3d(file, x_size, y_size, z_size):
 
 
 def sort_voxels(input_voxels, point):
-    # Sort voxels by distance from point
+    # Sort voxels by distance
     distances = np.linalg.norm(input_voxels + point, axis=1)  # Voodoo
     indices = np.argsort(distances)[::-1]  # Reverse sort the list
     output_voxels = input_voxels[indices]  # Turn back from distances to positions
@@ -236,7 +236,7 @@ breaking = False
 
 camera = Camera(Vector3(0, 0, 0), 0, 0, 0)
 
-movement_speed = 5  # Units per second
+movement_speed = 45  # Units per second
 reach_distance = 5
 mouse_sensitivity = 0.25
 
@@ -351,27 +351,31 @@ while running:
     # Rendering
     screen.fill(BLACK)  # Clear the screen - doubles as background
 
+
+
+
     # Construct an array of the non-air voxels
     non_air_voxels = np.argwhere(voxels != 0)
 
     # Sort the coordinates based on distances
     sorted_voxels = sort_voxels(non_air_voxels, camera.position)
 
-    min_chunk = -2
-    max_chunk = 7
+    render_x, render_y, render_z = 5, 5, 5
+    chunks = np.zeros((render_x, render_y, render_z), dtype=int)
+    chunk_indices = np.argwhere(chunks == 0)
+    camera_chunk = Vector3(camera.x/16, camera.y/16, camera.z/16)
+    sorted_chunks = sort_voxels(chunk_indices, camera_chunk)
+    for chunk in sorted_chunks:
+        x_chunk, y_chunk, z_chunk = chunk
+        for voxel in sorted_voxels:
+            x, y, z = voxel
+            voxel_type = voxels[x, y, z]
 
-    for x_chunk in range(min_chunk, max_chunk):
-        for y_chunk in range(min_chunk, max_chunk):
-            for z_chunk in range(min_chunk, max_chunk):
-                for voxel in sorted_voxels:
-                    x, y, z = voxel
-                    voxel_type = voxels[x, y, z]
+            absolute_x = x + x_chunk * 16
+            absolute_y = y + y_chunk * 16
+            absolute_z = z + z_chunk * 16
 
-                    absolute_x = x + x_chunk * 16
-                    absolute_y = y + y_chunk * 16
-                    absolute_z = z + z_chunk * 16
-
-                    process_voxel(voxel_type, x, y, z, x_chunk, y_chunk, z_chunk)
+            process_voxel(voxel_type, x, y, z, x_chunk, y_chunk, z_chunk)
 
     # Crosshair
     pygame.draw.circle(screen, WHITE, (WIDTH/2, HEIGHT/2), 2)
