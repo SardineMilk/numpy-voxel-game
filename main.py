@@ -189,10 +189,12 @@ voxel_types = [
 pygame.init()
 WIDTH, HEIGHT = 800, 800  # Base resolution for display
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
+clock = pygame.time.Clock()
 
 BACKFACE_TOLERANCE = -0.3
 FRUSTUM_TOLERANCE = 0.5
 FOCAL_LENGTH = 1
+MAX_FPS = 60
 
 camera = Camera((0.0, 1.0, 5.0), 0, 0, 0)
 voxels = np.zeros((16, 16, 16), dtype=int)
@@ -204,9 +206,10 @@ voxels[1, 2, 3] = 2
 running = True
 while running:
     # Player logic
+    for event in pygame.event.get():
+        pass
     keys = pygame.key.get_pressed()
     camera = move_camera()
-    print(camera.position)
 
     # Process the voxels
     filtered_voxels = np.argwhere(voxels != 0)  # Array of the indices of non-zero voxels
@@ -221,3 +224,6 @@ while running:
             pygame.gfxdraw.filled_polygon(screen, shape, colour)
 
     pygame.display.flip()
+    clock.tick(MAX_FPS)
+
+pygame.quit()
